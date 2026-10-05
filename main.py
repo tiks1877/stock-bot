@@ -1,15 +1,20 @@
 import time
+import threading
 import requests
 import yfinance as yf
 import pandas as pd
+from flask import Flask
 
-# Telegram 設定
+# 建立偽裝的 Web Server 以符合 Render 免費方案要求
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Stock Bot 運行中..."
+
 TELEGRAM_TOKEN = "8829545402:AAFFPm1WGXlIFlicOyzMg97CoptIJ_KiGmg"
 TELEGRAM_CHAT_ID = "5267209755"
-
-# 監控清單
 TECH_GIANTS = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "TSLA"]
-
 PRICE_JUMP_THRESHOLD = 0.8  
 ALERT_COOLDOWN = 300  
 last_alert_time = {}
@@ -24,8 +29,7 @@ def send_telegram_alert(signal_type, ticker, price, change_pct, reason):
     }
     header = headers.get(signal_type, "📢 *【行情提醒】*")
     text = (
-        f"{header}\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
+        f"{header}\n━━━━━━━━━━━━━━━━━━\n"
         f"💻 *標的*：`{ticker}`\n"
         f"💵 *即時價格*：`${price:.2f}`\n"
         f"📊 *短線變動*：`{change_pct:+.2f}%`\n"
@@ -35,7 +39,6 @@ def send_telegram_alert(signal_type, ticker, price, change_pct, reason):
     )
     try:
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=5)
-        print(f"[{time.strftime('%H:%M:%S')}] 已推播 {ticker} 訊號至 Telegram！")
     except Exception as e:
         print(f"推播失敗: {e}")
 
@@ -77,9 +80,17 @@ def check_stock_volatility(ticker):
     except Exception as e:
         print(f"檢查 {ticker} 時出錯: {e}")
 
-if __name__ == "__main__":
-    print("啟動 1 分鐘高頻科技龍頭監控中...")
+def stock_monitoring_loop():
     while True:
         for ticker in TECH_GIANTS:
             check_stock_volatility(ticker)
         time.sleep(60)
+
+if __name__ == "__main__":
+    # 將監控迴圈放在背景線程
+    thread = threading.Thread(target=stock_monitoring_loop)
+    thread.daemon = True
+    thread.start()
+    
+    # 啟動 Web 服務給 Render 偵測
+    app.run(host='0.0.0.0', port=10000)
