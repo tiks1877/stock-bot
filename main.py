@@ -1,23 +1,12 @@
 import time
-import threading
 import requests
 import yfinance as yf
 import pandas as pd
-from flask import Flask
-
-# 建立偽裝的 Web Server 以符合 Render 免費方案要求
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Stock Bot 運行中..."
 
 TELEGRAM_TOKEN = "8829545402:AAFFPm1WGXlIFlicOyzMg97CoptIJ_KiGmg"
 TELEGRAM_CHAT_ID = "5267209755"
 TECH_GIANTS = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "TSLA"]
 PRICE_JUMP_THRESHOLD = 0.8  
-ALERT_COOLDOWN = 300  
-last_alert_time = {}
 
 def send_telegram_alert(signal_type, ticker, price, change_pct, reason):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -38,18 +27,16 @@ def send_telegram_alert(signal_type, ticker, price, change_pct, reason):
         f"⏰ *觸發時間*：{time.strftime('%H:%M:%S')}"
     )
     try:
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=5)
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        print(f"已發送 {ticker} 警報至 Telegram")
     except Exception as e:
         print(f"推播失敗: {e}")
 
-def check_stock_volatility(ticker):
-    now = time.time()
-    if ticker in last_alert_time and (now - last_alert_time[ticker] < ALERT_COOLDOWN):
-        return
-
+def check_stock(ticker):
     try:
-        df = yf.download(ticker, period="1d", interval="1m", progress=False)
+        df = yf.download(ticker, period="5d", interval="1m", prepost=True, progress=False)
         if df.empty or len(df) < 20:
+            print(f"[{ticker}] 暫無足夠 1 分鐘線數據")
             return
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -65,32 +52,21 @@ def check_stock_volatility(ticker):
         rs = gain / loss
         rsi = float((100 - (100 / (1 + rs))).iloc[-1])
 
-        if minute_change >= PRICE_JUMP_THRESHOLD:
-            send_telegram_alert("PUMP", ticker, latest_close, minute_change, f"1分鐘內急拉 +{minute_change:.2f}%")
-            last_alert_time[ticker] = now
-        elif minute_change <= -PRICE_JUMP_THRESHOLD:
-            send_telegram_alert("DUMP", ticker, latest_close, minute_change, f"1分鐘內跳水 {minute_change:.2f}%")
-            last_alert_time[ticker] = now
-        elif rsi <= 20:
-            send_telegram_alert("OVERSOLD", ticker, latest_close, minute_change, f"1分鐘 RSI 極端超賣 ({rsi:.1f})")
-            last_alert_time[ticker] = now
-        elif rsi >= 82:
-            send_telegram_alert("OVERBOUGHT", ticker, latest_close, minute_change, f"1分鐘 RSI 極端過熱 ({rsi:.1f})")
-            last_alert_time[ticker] = now
-    except Exception as e:
-        print(f"檢查 {ticker} 時出錯: {e}")
+        print(f"{ticker}: ${latest_close:.2f} | 變動: {minute_change:+.2f}% | RSI: {rsi:.1f}")
 
-def stock_monitoring_loop():
-    while True:
-        for ticker in TECH_GIANTS:
-            check_stock_volatility(ticker)
-        time.sleep(60)
+        if minute_change >= PRICE_JUMP_THRESHOLD:
+            send_telegram_alert("PUMP", ticker, latest_close, minute_change, f"1分鐘急拉 +{minute_change:.2f}%")
+        elif minute_change <= -PRICE_JUMP_THRESHOLD:
+            send_telegram_alert("DUMP", ticker, latest_close, minute_change, f"1分鐘跳水 {minute_change:.2f}%")
+        elif rsi <= 20:
+            send_telegram_alert("OVERSOLD", ticker, latest_close, minute_change, f"RSI 極端超賣 ({rsi:.1f})")
+        elif rsi >= 82:
+            send_telegram_alert("OVERBOUGHT", ticker, latest_close, minute_change, f"RSI 極端超買 ({rsi:.1f})")
+    except Exception as e:
+        print(f"檢查 {ticker} 出錯: {e}")
 
 if __name__ == "__main__":
-    # 將監控迴圈放在背景線程
-    thread = threading.Thread(target=stock_monitoring_loop)
-    thread.daemon = True
-    thread.start()
-    
-    # 啟動 Web 服務給 Render 偵測
-    app.run(host='0.0.0.0', port=10000)
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 開始執行美股科技巨頭巡邏...")
+    for ticker in TECH_GIANTS:
+        check_stock(ticker)
+    print("巡邏完畢！")
